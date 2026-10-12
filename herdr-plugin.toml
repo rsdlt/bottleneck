@@ -24,3 +24,12 @@ command = ["./target/release/bottleneck", "record"]
 # Marks a Herdr (re)start, so waits left open across it are not counted.
 [[startup]]
 command = ["./target/release/bottleneck", "record"]
+
+# The report, opened by the action below.
+[[panes]]
+id = "report"
+title = "Bottleneck"
+placement = "popup"
+width = "80%"
+height = "80%"
+command = ["./target/release/bottleneck", "view"]

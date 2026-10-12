@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use bottleneck::{event, log};
+use bottleneck::{event, log, view};
 
 const USAGE: &str = "usage: bottleneck <record|view|open>";
 
@@ -18,6 +18,7 @@ fn main() -> ExitCode {
             }
             ExitCode::SUCCESS
         }
+        Some("view") => exit_code(view()),
         _ => {
             eprintln!("{USAGE}");
             ExitCode::from(2)
@@ -40,6 +41,21 @@ fn record() -> Result<(), Box<dyn Error>> {
         log::append(&log::path(&state_dir()?), &record)?;
     }
     Ok(())
+}
+
+/// Runs as the report pane.
+fn view() -> Result<(), Box<dyn Error>> {
+    Ok(view::run(&log::path(&state_dir()?), now_ms)?)
+}
+
+fn exit_code(result: Result<(), Box<dyn Error>>) -> ExitCode {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("bottleneck: {err}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 fn state_dir() -> Result<PathBuf, &'static str> {
