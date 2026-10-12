@@ -1,0 +1,9 @@
+id = "rsdlt.bottleneck"
+name = "Bottleneck"
+version = "0.1.0"
+min_herdr_version = "0.9.3"
+description = "Measure how long your agents sit waiting on you."
+platforms = ["linux", "macos"]
+
+[[build]]
+command = ["cargo", "build", "--release"]
