@@ -180,6 +180,17 @@ pub fn report(records: &[Record], since_ms: u64, now_ms: u64) -> Report {
     report
 }
 
+/// Blocked time for one pane in the window: the `$waited` sidebar token.
+pub fn pane_blocked_ms(records: &[Record], pane_id: &str, since_ms: u64, now_ms: u64) -> u64 {
+    // Session starts have no pane but must stay: they interrupt open waits.
+    let pane: Vec<Record> = records
+        .iter()
+        .filter(|record| record.pane_id().is_none_or(|id| id == pane_id))
+        .cloned()
+        .collect();
+    report(&pane, since_ms, now_ms).total.blocked_total()
+}
+
 fn sorted_by_blocked(groups: BTreeMap<&str, Summary>) -> Vec<(String, Summary)> {
     let mut rows: Vec<_> = groups
         .into_iter()
@@ -368,6 +379,19 @@ mod tests {
             .map(|(n, s)| (n.as_str(), s.blocked_total()))
             .collect();
         assert_eq!(agents, [("claude", 6 * MIN), ("(no agent)", 2 * MIN)]);
+    }
+
+    #[test]
+    fn pane_blocked_counts_only_that_pane() {
+        let records = [
+            status(0, "w1:p1", Status::Blocked),
+            status(0, "w1:p2", Status::Blocked),
+            status(2 * MIN, "w1:p1", Status::Working),
+            Record::SessionStart { ts_ms: 3 * MIN },
+        ];
+        assert_eq!(pane_blocked_ms(&records, "w1:p1", 0, 9 * MIN), 2 * MIN);
+        // w1:p2's wait was cut off by the restart, so it doesn't count.
+        assert_eq!(pane_blocked_ms(&records, "w1:p2", 0, 9 * MIN), 0);
     }
 
     #[test]

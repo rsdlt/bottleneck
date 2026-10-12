@@ -51,6 +51,13 @@ impl Record {
             | Record::SessionStart { ts_ms } => *ts_ms,
         }
     }
+
+    pub fn pane_id(&self) -> Option<&str> {
+        match self {
+            Record::Status { pane_id, .. } | Record::Closed { pane_id, .. } => Some(pane_id),
+            Record::SessionStart { .. } => None,
+        }
+    }
 }
 
 // The subset of Herdr's payloads we read. serde ignores unknown fields by

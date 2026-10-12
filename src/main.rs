@@ -1,13 +1,15 @@
 use std::env;
 use std::error::Error;
 use std::ffi::OsString;
-use std::path::PathBuf;
-use std::process::{Command, ExitCode};
+use std::path::{Path, PathBuf};
+use std::process::{Command, ExitCode, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use bottleneck::{event, log, view};
+use bottleneck::event::{self, Record};
+use bottleneck::{log, stats, view};
 
 const USAGE: &str = "usage: bottleneck <record|view|open>";
+const DAY_MS: u64 = 24 * 60 * 60 * 1000;
 
 fn main() -> ExitCode {
     match env::args().nth(1).as_deref() {
@@ -39,8 +41,35 @@ fn record() -> Result<(), Box<dyn Error>> {
         context_json.as_deref(),
         now_ms(),
     )?;
-    if let Some(record) = record {
-        log::append(&log::path(&state_dir()?), &record)?;
+    let Some(record) = record else {
+        return Ok(());
+    };
+    let log_path = log::path(&state_dir()?);
+    log::append(&log_path, &record)?;
+    if let Record::Status { ts_ms, pane_id, .. } = &record {
+        publish_waited(&log_path, pane_id, *ts_ms)?;
+    }
+    Ok(())
+}
+
+/// Publishes the pane's blocked time over the last 24 hours as the `waited`
+/// token, so a sidebar row can show `$waited`.
+fn publish_waited(log_path: &Path, pane_id: &str, now_ms: u64) -> Result<(), Box<dyn Error>> {
+    let records = log::read(log_path)?.records;
+    let waited = stats::pane_blocked_ms(&records, pane_id, now_ms.saturating_sub(DAY_MS), now_ms);
+    if waited == 0 {
+        return Ok(());
+    }
+    // Hooks can finish out of order; `--seq` makes Herdr drop stale reports.
+    let status = Command::new(herdr_env("HERDR_BIN_PATH")?)
+        .args(["pane", "report-metadata", pane_id])
+        .args(["--source", "rsdlt.bottleneck"])
+        .args(["--seq", &now_ms.to_string()])
+        .args(["--token", &format!("waited=waited {}", view::human(waited))])
+        .stdout(Stdio::null())
+        .status()?;
+    if !status.success() {
+        return Err(format!("herdr pane report-metadata failed: {status}").into());
     }
     Ok(())
 }
