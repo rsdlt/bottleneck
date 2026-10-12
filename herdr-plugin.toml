@@ -7,3 +7,20 @@ platforms = ["linux", "macos"]
 
 [[build]]
 command = ["cargo", "build", "--release"]
+
+# Each hook run appends one line to $HERDR_PLUGIN_STATE_DIR/events.jsonl.
+[[events]]
+on = "pane.agent_status_changed"
+command = ["./target/release/bottleneck", "record"]
+
+[[events]]
+on = "pane.closed"
+command = ["./target/release/bottleneck", "record"]
+
+[[events]]
+on = "pane.exited"
+command = ["./target/release/bottleneck", "record"]
+
+# Marks a Herdr (re)start, so waits left open across it are not counted.
+[[startup]]
+command = ["./target/release/bottleneck", "record"]
