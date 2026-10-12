@@ -1,11 +1,10 @@
-mod event;
-mod log;
-
 use std::env;
 use std::error::Error;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use bottleneck::{event, log};
 
 const USAGE: &str = "usage: bottleneck <record|view|open>";
 

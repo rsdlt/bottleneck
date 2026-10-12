@@ -43,6 +43,16 @@ pub enum Record {
     },
 }
 
+impl Record {
+    pub fn ts_ms(&self) -> u64 {
+        match self {
+            Record::Status { ts_ms, .. }
+            | Record::Closed { ts_ms, .. }
+            | Record::SessionStart { ts_ms } => *ts_ms,
+        }
+    }
+}
+
 // The subset of Herdr's payloads we read. serde ignores unknown fields by
 // default, so new fields in Herdr's protocol don't break us.
 

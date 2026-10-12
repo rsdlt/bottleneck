@@ -1,0 +1,12 @@
+{"kind":"status","ts_ms":0,"pane_id":"w1:p1","workspace":"api","agent":"claude","status":"blocked"}
+{"kind":"status","ts_ms":120000,"pane_id":"w1:p1","workspace":"api","agent":"claude","status":"working"}
+{"kind":"status","ts_ms":100000,"pane_id":"w2:p1","workspace":"web","agent":"codex","status":"blocked"}
+{"kind":"closed","ts_ms":400000,"pane_id":"w2:p1"}
+{"kind":"status","ts_ms":600000,"pane_id":"w1:p1","workspace":"api","agent":"claude","status":"blocked"}
+{"kind":"status","ts_ms":600300,"pane_id":"w1:p1","workspace":"api","status":"unknown"}
+{"kind":"status","ts_ms":900000,"pane_id":"w2:p2","workspace":"web","agent":"codex","status":"working"}
+{"kind":"status","ts_ms":1200000,"pane_id":"w1:p1","workspace":"api","agent":"claude","status":"working"}
+{"kind":"status","ts_ms":300000,"pane_id":"w2:p2","workspace":"web","agent":"codex","status":"blocked"}
+{"kind":"status","ts_ms":1500000,"pane_id":"w1:p1","work
+{"kind":"status","ts_ms":1500000,"pane_id":"w1:p1","workspace":"api","agent":"claude","status":"done"}
+{"kind":"status","ts_ms":1560000,"pane_id":"w1:p1","workspace":"api","agent":"claude","status":"idle"}
