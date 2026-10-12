@@ -33,3 +33,14 @@ placement = "popup"
 width = "80%"
 height = "80%"
 command = ["./target/release/bottleneck", "view"]
+
+# Bind it to a key in Herdr's config, for example:
+#   [[keys.command]]
+#   key = "prefix+b"
+#   type = "plugin_action"
+#   command = "rsdlt.bottleneck.open-report"
+#   description = "Bottleneck report"
+[[actions]]
+id = "open-report"
+title = "Show bottleneck report"
+command = ["./target/release/bottleneck", "open"]
