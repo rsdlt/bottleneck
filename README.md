@@ -28,6 +28,10 @@ as a permission prompt. If your agents auto-approve their tools, most of
 their waiting shows up as 👀 Unread instead. That wait ends when the agent
 leaves `done`, which Herdr defines as "idle and not yet seen".
 
+Below the tables, a histogram splits the selected period into 24 slices and
+shows blocked and unread time side by side in each, so you can see when the
+waiting happened. Waits that overlap several slices are split across them.
+
 The report ends with a joke aimed at whichever wait cost you more in total,
 blocked or unread.
 

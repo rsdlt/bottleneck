@@ -10,16 +10,16 @@ use std::path::Path;
 use std::time::Duration;
 
 use ratatui::crossterm::event::{self, KeyCode};
-use ratatui::layout::{Constraint, Layout};
-use ratatui::style::Stylize;
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::{Color, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph, Row, Table};
+use ratatui::widgets::{Bar, BarChart, BarGroup, Block, Paragraph, Row, Table};
 use ratatui::{DefaultTerminal, Frame};
 
 use crate::event::Record;
 use crate::log::{self, Log};
 use crate::quips;
-use crate::stats::{self, Summary, Wait};
+use crate::stats::{self, Slice, Summary, Wait};
 
 /// The metric columns as (header, description). The table header and the
 /// legend both read from here, so they can't drift apart. Every name starts
@@ -42,6 +42,12 @@ const AGENT: &str = "🤖 Agent";
 
 /// Names longer than this are truncated so the metrics stay on screen.
 const MAX_NAME_WIDTH: usize = 30;
+
+/// Bars in the histogram. Each slice draws a blocked and an unread bar plus
+/// a gap, so 24 slices take 71 cells and fit the 80-cell popup.
+const SLICES: usize = 24;
+const BLOCKED_COLOR: Color = Color::Red;
+const UNREAD_COLOR: Color = Color::Yellow;
 
 const REFRESH: Duration = Duration::from_secs(2);
 const HOUR_MS: u64 = 60 * 60 * 1000;
@@ -67,7 +73,7 @@ impl Window {
 
     fn since_ms(self, records: &[Record], now_ms: u64) -> u64 {
         match self {
-            Window::Session => stats::session_start_ms(records),
+            Window::Session => stats::session_start_ms(records).unwrap_or(now_ms),
             Window::Day => now_ms.saturating_sub(24 * HOUR_MS),
             Window::Week => now_ms.saturating_sub(7 * 24 * HOUR_MS),
         }
@@ -116,11 +122,12 @@ fn event_loop(
 fn render(frame: &mut Frame, log: &Log, window: Window, now_ms: u64, seed: u64) {
     let since_ms = window.since_ms(&log.records, now_ms);
     let report = stats::report(&log.records, since_ms, now_ms);
-    let [legend, header, workspaces, agents, quip, footer] = Layout::vertical([
+    let [legend, header, workspaces, agents, chart, quip, footer] = Layout::vertical([
         Constraint::Length(COLUMNS.len() as u16 + 2),
         Constraint::Length(5),
         Constraint::Fill(1),
         Constraint::Fill(1),
+        Constraint::Length(9),
         Constraint::Length(3),
         Constraint::Length(1),
     ])
@@ -166,6 +173,9 @@ fn render(frame: &mut Frame, log: &Log, window: Window, now_ms: u64, seed: u64) 
             report.interrupted
         ));
     }
+    let slices = stats::histogram(&log.records, since_ms, now_ms, SLICES);
+    render_histogram(frame, chart, &slices, now_ms - since_ms.min(now_ms));
+
     let message = quips::pick(
         report.total.blocked_total(),
         report.total.unseen_total(),
@@ -175,6 +185,59 @@ fn render(frame: &mut Frame, log: &Log, window: Window, now_ms: u64, seed: u64) 
         Paragraph::new(format!(" {message}").italic()).block(Block::bordered().title(" 💬 "));
     frame.render_widget(quip_widget, quip);
     frame.render_widget(Line::from(notes.join("  ·  ")).dim(), footer);
+}
+
+/// Draws the histogram with a time axis underneath. There is no y-axis, so
+/// the title gives the scale: what one bar covers and the tallest bar.
+fn render_histogram(frame: &mut Frame, area: Rect, slices: &[Slice], span_ms: u64) {
+    let tallest = slices
+        .iter()
+        .map(|slice| slice.blocked_ms.max(slice.unseen_ms))
+        .max()
+        .unwrap_or_default();
+    let title = format!(
+        " 📈 over time · one bar = {} · tallest {} ",
+        human(span_ms / SLICES as u64),
+        human(tallest),
+    );
+    let block = Block::bordered().title(title);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let width = (SLICES * 3 - 1) as u16;
+    let [inner] = Layout::horizontal([Constraint::Length(width)]).areas(inner);
+    let [bars, axis] = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(inner);
+
+    let groups: Vec<BarGroup> = slices
+        .iter()
+        .map(|slice| {
+            // An empty text value stops ratatui printing numbers in the bars.
+            BarGroup::new([
+                Bar::new(slice.blocked_ms)
+                    .style(BLOCKED_COLOR)
+                    .text_value(""),
+                Bar::new(slice.unseen_ms).style(UNREAD_COLOR).text_value(""),
+            ])
+        })
+        .collect();
+    let chart = BarChart::grouped(groups)
+        .bar_width(1)
+        .bar_gap(0)
+        .group_gap(1);
+    frame.render_widget(chart, bars);
+
+    // Three lines share the axis row: start on the left, key in the middle,
+    // "now" on the right. The x-axis is relative because we don't know the
+    // local timezone, so it can't show clock times.
+    frame.render_widget(Line::from(format!("{} ago", human(span_ms))).dim(), axis);
+    let key = Line::from(vec![
+        "█".fg(BLOCKED_COLOR),
+        " blocked   ".into(),
+        "█".fg(UNREAD_COLOR),
+        " unread".into(),
+    ]);
+    frame.render_widget(key.centered(), axis);
+    frame.render_widget(Line::from("now").dim().right_aligned(), axis);
 }
 
 fn legend_widget() -> Paragraph<'static> {
@@ -262,7 +325,7 @@ mod tests {
     }
 
     fn draw(log: &Log, window: Window) -> String {
-        let mut terminal = Terminal::new(TestBackend::new(110, 30)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(80, 40)).unwrap();
         terminal
             .draw(|frame| render(frame, log, window, 2_000_000, 0))
             .unwrap();
@@ -289,6 +352,9 @@ mod tests {
             "{web}"
         );
         assert!(screen.contains("codex"), "{screen}");
+        // "Last 24h" is capped at the first record, 33 minutes before now.
+        assert!(screen.contains("over time · one bar = 1m"), "{screen}");
+        assert!(screen.contains("33m ago"), "{screen}");
         assert!(
             screen.contains("1 unreadable log lines skipped"),
             "{screen}"

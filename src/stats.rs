@@ -39,6 +39,17 @@ struct Episode<'a> {
     end: End,
 }
 
+impl Episode<'_> {
+    /// Which total this episode adds to, if any. Interrupted waits have no
+    /// known end, and an unread pane closed unseen was never viewed.
+    fn counted_as(&self) -> Option<Wait> {
+        match (self.wait, self.end) {
+            (_, End::Interrupted) | (Wait::Unseen, End::Abandoned) => None,
+            (wait, _) => Some(wait),
+        }
+    }
+}
+
 /// Turns records into wait episodes, replaying each pane's states in time order.
 fn episodes(records: &[Record], now_ms: u64) -> Vec<Episode<'_>> {
     // Hooks run concurrently, so the file order can disagree with the
@@ -130,13 +141,13 @@ pub struct Summary {
 
 impl Summary {
     fn add(&mut self, episode: &Episode, ms: u64) {
-        match (episode.wait, episode.end) {
-            (_, End::Interrupted) | (Wait::Unseen, End::Abandoned) => {}
-            (Wait::Blocked, end) => {
+        match episode.counted_as() {
+            Some(Wait::Blocked) => {
                 self.blocked.push(ms);
-                self.abandoned += usize::from(end == End::Abandoned);
+                self.abandoned += usize::from(episode.end == End::Abandoned);
             }
-            (Wait::Unseen, End::Resolved) => self.unseen.push(ms),
+            Some(Wait::Unseen) => self.unseen.push(ms),
+            None => {}
         }
     }
 
@@ -207,16 +218,52 @@ pub fn pane_blocked_ms(records: &[Record], pane_id: &str, since_ms: u64, now_ms:
     report(&pane, since_ms, now_ms).total.blocked_total()
 }
 
-/// When the current Herdr session started: the latest `session_start`, or 0
-/// if Herdr hasn't restarted since recording began (the startup hook doesn't
-/// run when a plugin is first linked, so then everything is this session).
-pub fn session_start_ms(records: &[Record]) -> u64 {
-    records
+/// When the current Herdr session started: the latest `session_start`.
+/// Herdr doesn't run startup hooks when a plugin is first linked, so until
+/// its next restart the session starts at the first record. `None` for an
+/// empty log.
+pub fn session_start_ms(records: &[Record]) -> Option<u64> {
+    let restart = records
         .iter()
         .filter(|record| matches!(record, Record::SessionStart { .. }))
         .map(Record::ts_ms)
-        .max()
-        .unwrap_or(0)
+        .max();
+    restart.or_else(|| records.iter().map(Record::ts_ms).min())
+}
+
+/// Time spent waiting within one slice of the histogram.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Slice {
+    pub blocked_ms: u64,
+    pub unseen_ms: u64,
+}
+
+/// Splits `since_ms..now_ms` into equal slices and adds each wait's time to
+/// the slices it overlaps, so a long wait spreads across several bars
+/// instead of piling into the one where it started.
+pub fn histogram(records: &[Record], since_ms: u64, now_ms: u64, slices: usize) -> Vec<Slice> {
+    let mut histogram = vec![Slice::default(); slices];
+    let span = now_ms.saturating_sub(since_ms);
+    let count = slices as u64;
+    for episode in episodes(records, now_ms) {
+        let Some(wait) = episode.counted_as() else {
+            continue;
+        };
+        for (i, slice) in (0..).zip(histogram.iter_mut()) {
+            // Integer bounds that tile the span exactly: no gaps, no overlaps.
+            let start = since_ms + span * i / count;
+            let end = since_ms + span * (i + 1) / count;
+            let overlap = episode
+                .end_ms
+                .min(end)
+                .saturating_sub(episode.start_ms.max(start));
+            match wait {
+                Wait::Blocked => slice.blocked_ms += overlap,
+                Wait::Unseen => slice.unseen_ms += overlap,
+            }
+        }
+    }
+    histogram
 }
 
 fn sorted_by_blocked(groups: BTreeMap<&str, Summary>) -> Vec<(String, Summary)> {
@@ -412,12 +459,59 @@ mod tests {
 
     #[test]
     fn session_starts_at_the_latest_restart() {
-        assert_eq!(session_start_ms(&[status(5, "w1:p1", Status::Idle)]), 0);
+        assert_eq!(session_start_ms(&[]), None);
+        // No restart recorded yet: the session starts at the first record.
+        let records = [
+            status(7, "w1:p1", Status::Idle),
+            status(5, "w1:p1", Status::Done),
+        ];
+        assert_eq!(session_start_ms(&records), Some(5));
         let records = [
             Record::SessionStart { ts_ms: 9 },
             Record::SessionStart { ts_ms: 3 },
         ];
-        assert_eq!(session_start_ms(&records), 9);
+        assert_eq!(session_start_ms(&records), Some(9));
+    }
+
+    fn slice(blocked_ms: u64, unseen_ms: u64) -> Slice {
+        Slice {
+            blocked_ms,
+            unseen_ms,
+        }
+    }
+
+    #[test]
+    fn histogram_spreads_a_wait_across_the_slices_it_spans() {
+        let records = [
+            status(MIN / 2, "w1:p1", Status::Blocked),
+            status(3 * MIN / 2, "w1:p1", Status::Done),
+            status(3 * MIN, "w1:p1", Status::Idle),
+        ];
+        let half = MIN / 2;
+        let expected = [
+            slice(half, 0),
+            slice(half, half),
+            slice(0, MIN),
+            slice(0, 0),
+        ];
+        assert_eq!(histogram(&records, 0, 4 * MIN, 4), expected);
+    }
+
+    #[test]
+    fn histogram_skips_waits_the_totals_skip() {
+        let records = [
+            status(0, "w1:p1", Status::Blocked),
+            Record::SessionStart { ts_ms: MIN },
+            status(0, "w1:p2", Status::Done),
+            closed(MIN, "w1:p2"),
+        ];
+        assert_eq!(histogram(&records, 0, 2 * MIN, 2), [slice(0, 0); 2]);
+    }
+
+    #[test]
+    fn histogram_of_an_empty_span_is_empty() {
+        let records = [status(0, "w1:p1", Status::Blocked)];
+        assert_eq!(histogram(&records, 5, 5, 3), [slice(0, 0); 3]);
     }
 
     #[test]
@@ -446,6 +540,12 @@ mod tests {
         assert_eq!(r.total.blocked.iter().max(), Some(&(10 * MIN)));
         assert_eq!(r.total.abandoned, 1);
         assert_eq!(r.total.unseen, [MIN]);
+
+        // The histogram adds up to the same totals as the report.
+        let slices = histogram(&log.records, 0, 2_000_000, 24);
+        let blocked: u64 = slices.iter().map(|s| s.blocked_ms).sum();
+        let unseen: u64 = slices.iter().map(|s| s.unseen_ms).sum();
+        assert_eq!((blocked, unseen), (27 * MIN, MIN));
 
         let names: Vec<_> = r.by_workspace.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, ["web", "api"]);
