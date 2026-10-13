@@ -10,9 +10,12 @@ use std::collections::{BTreeMap, HashMap};
 
 use crate::event::{Record, Status};
 
+/// The two ways an agent waits on you.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Wait {
+pub enum Wait {
+    /// Needs an answer: from `blocked` until any other known state.
     Blocked,
+    /// Finished: from `done` until you view it.
     Unseen,
 }
 
@@ -143,6 +146,15 @@ impl Summary {
 
     pub fn unseen_total(&self) -> u64 {
         self.unseen.iter().sum()
+    }
+
+    /// The longest single wait of either kind. On a tie it reports blocked,
+    /// the wait that needed you to act.
+    pub fn longest(&self) -> Option<(u64, Wait)> {
+        let unseen = self.unseen.iter().map(|&ms| (ms, Wait::Unseen));
+        let blocked = self.blocked.iter().map(|&ms| (ms, Wait::Blocked));
+        // `max_by_key` returns the last of equal maxima, so blocked goes last.
+        unseen.chain(blocked).max_by_key(|&(ms, _)| ms)
     }
 }
 
@@ -406,6 +418,19 @@ mod tests {
             Record::SessionStart { ts_ms: 3 },
         ];
         assert_eq!(session_start_ms(&records), 9);
+    }
+
+    #[test]
+    fn longest_wait_is_either_kind_and_ties_go_to_blocked() {
+        let summary = |blocked: &[u64], unseen: &[u64]| Summary {
+            blocked: blocked.to_vec(),
+            unseen: unseen.to_vec(),
+            abandoned: 0,
+        };
+        assert_eq!(summary(&[], &[]).longest(), None);
+        assert_eq!(summary(&[5, 2], &[3]).longest(), Some((5, Wait::Blocked)));
+        assert_eq!(summary(&[2], &[3, 7]).longest(), Some((7, Wait::Unseen)));
+        assert_eq!(summary(&[4], &[4]).longest(), Some((4, Wait::Blocked)));
     }
 
     #[test]

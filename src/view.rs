@@ -19,7 +19,7 @@ use ratatui::{DefaultTerminal, Frame};
 use crate::event::Record;
 use crate::log::{self, Log};
 use crate::quips;
-use crate::stats::{self, Summary};
+use crate::stats::{self, Summary, Wait};
 
 /// The metric columns as (header, description). The table header and the
 /// legend both read from here, so they can't drift apart. Every name starts
@@ -34,7 +34,7 @@ const COLUMNS: [(&str, &str); 3] = [
         "👀 Unread",
         "total time finished agents waited until you looked at them",
     ),
-    ("🐢 Longest", "longest single block"),
+    ("🐢 Longest", "longest single wait, blocked or unread"),
 ];
 
 const WORKSPACE: &str = "📁 Workspace";
@@ -118,7 +118,7 @@ fn render(frame: &mut Frame, log: &Log, window: Window, now_ms: u64, seed: u64) 
     let report = stats::report(&log.records, since_ms, now_ms);
     let [legend, header, workspaces, agents, quip, footer] = Layout::vertical([
         Constraint::Length(COLUMNS.len() as u16 + 2),
-        Constraint::Length(4),
+        Constraint::Length(5),
         Constraint::Fill(1),
         Constraint::Fill(1),
         Constraint::Length(3),
@@ -192,11 +192,7 @@ fn summary_lines(total: &Summary) -> Vec<Line<'static>> {
             " No waits in this window. Agents that block or finish show up here.",
         )];
     }
-    let mut blocked = format!(
-        " ✋ blocked {} in total · 🐢 longest {}",
-        human(total.blocked_total()),
-        maybe(total.blocked.iter().max().copied()),
-    );
+    let mut blocked = format!(" ✋ blocked {} in total", human(total.blocked_total()));
     if total.abandoned > 0 {
         blocked += &format!(" · {} abandoned", total.abandoned);
     }
@@ -205,7 +201,8 @@ fn summary_lines(total: &Summary) -> Vec<Line<'static>> {
         human(total.unseen_total()),
         total.unseen.len(),
     );
-    vec![Line::from(blocked), Line::from(unseen)]
+    let longest = format!(" 🐢 longest {}", longest(total));
+    vec![Line::from(blocked), Line::from(unseen), Line::from(longest)]
 }
 
 fn table<'a>(kind: &'a str, rows: &'a [(String, Summary)], name_width: u16) -> Table<'a> {
@@ -215,11 +212,16 @@ fn table<'a>(kind: &'a str, rows: &'a [(String, Summary)], name_width: u16) -> T
             name.clone(),
             human(s.blocked_total()),
             human(s.unseen_total()),
-            maybe(s.blocked.iter().max().copied()),
+            longest(s),
         ])
     });
-    let mut widths = vec![Constraint::Length(name_width)];
-    widths.extend(COLUMNS.map(|_| Constraint::Length(11)));
+    let widths = [
+        Constraint::Length(name_width),
+        Constraint::Length(11),
+        Constraint::Length(11),
+        // The last column takes the rest: "2h05m blocked" needs 13 cells.
+        Constraint::Fill(1),
+    ];
     Table::new(rows, widths)
         .header(header)
         .block(Block::bordered())
@@ -236,8 +238,13 @@ pub fn human(ms: u64) -> String {
     }
 }
 
-fn maybe(ms: Option<u64>) -> String {
-    ms.map_or_else(|| "–".to_owned(), human)
+/// The longest wait and its kind, such as `10m blocked`.
+fn longest(summary: &Summary) -> String {
+    match summary.longest() {
+        Some((ms, Wait::Blocked)) => format!("{} blocked", human(ms)),
+        Some((ms, Wait::Unseen)) => format!("{} unread", human(ms)),
+        None => "–".to_owned(),
+    }
 }
 
 #[cfg(test)]
@@ -267,7 +274,7 @@ mod tests {
         let log = log::parse(include_str!("../fixtures/two-workspaces.jsonl"));
         let screen = draw(&log, Window::Day);
         assert!(screen.contains("blocked 27m in total"), "{screen}");
-        assert!(screen.contains("longest 10m"), "{screen}");
+        assert!(screen.contains("longest 10m blocked"), "{screen}");
         // Blocked (27m) outweighs unread (1m); seed 0 picks the first quip.
         assert!(screen.contains("arms fell asleep"), "{screen}");
         assert!(
