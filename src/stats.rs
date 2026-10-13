@@ -217,18 +217,6 @@ fn sorted_by_blocked(groups: BTreeMap<&str, Summary>) -> Vec<(String, Summary)> 
     rows
 }
 
-pub fn median(values: &[u64]) -> Option<u64> {
-    let mut sorted = values.to_vec();
-    sorted.sort_unstable();
-    let mid = sorted.len() / 2;
-    match sorted.len() {
-        0 => None,
-        n if n % 2 == 1 => Some(sorted[mid]),
-        // Midpoint of the two middle values, written so it can't overflow.
-        _ => Some(sorted[mid - 1] + (sorted[mid] - sorted[mid - 1]) / 2),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,14 +409,6 @@ mod tests {
     }
 
     #[test]
-    fn median_of_odd_even_and_empty() {
-        assert_eq!(median(&[]), None);
-        assert_eq!(median(&[3, 1, 2]), Some(2));
-        assert_eq!(median(&[4, 1, 3, 2]), Some(2));
-        assert_eq!(median(&[u64::MAX, u64::MAX]), Some(u64::MAX));
-    }
-
-    #[test]
     fn fixture_with_mixed_edge_cases() {
         // Two workspaces, an unknown flicker, a pane closed while blocked,
         // records out of file order, and one truncated line.
@@ -438,7 +418,6 @@ mod tests {
         let r = report(&log.records, 0, 2_000_000);
         assert_eq!(r.total.blocked_total(), 27 * MIN);
         assert_eq!(r.total.blocked.len(), 4);
-        assert_eq!(median(&r.total.blocked), Some(7 * MIN + MIN / 2));
         assert_eq!(r.total.blocked.iter().max(), Some(&(10 * MIN)));
         assert_eq!(r.total.abandoned, 1);
         assert_eq!(r.total.unseen, [MIN]);

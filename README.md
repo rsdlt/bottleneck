@@ -20,8 +20,8 @@ hours or the last 7 days:
 | Column | Meaning |
 |---|---|
 | ✋ Blocked | total time agents sat `blocked`, waiting for your answer |
+| 👀 Unread | total time finished agents waited until you looked at them |
 | 🐢 Longest | longest single block |
-| 👀 Unread | median time from an agent finishing until you looked at it |
 
 Herdr reports `blocked` only when an agent stops to ask you something, such
 as a permission prompt. If your agents auto-approve their tools, most of

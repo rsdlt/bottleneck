@@ -19,7 +19,7 @@ use ratatui::{DefaultTerminal, Frame};
 use crate::event::Record;
 use crate::log::{self, Log};
 use crate::quips;
-use crate::stats::{self, Summary, median};
+use crate::stats::{self, Summary};
 
 /// The metric columns as (header, description). The table header and the
 /// legend both read from here, so they can't drift apart. Every name starts
@@ -30,11 +30,11 @@ const COLUMNS: [(&str, &str); 3] = [
         "✋ Blocked",
         "total time agents sat blocked, waiting for your answer",
     ),
-    ("🐢 Longest", "longest single block"),
     (
         "👀 Unread",
-        "median time from an agent finishing until you looked at it",
+        "total time finished agents waited until you looked at them",
     ),
+    ("🐢 Longest", "longest single block"),
 ];
 
 const WORKSPACE: &str = "📁 Workspace";
@@ -201,8 +201,8 @@ fn summary_lines(total: &Summary) -> Vec<Line<'static>> {
         blocked += &format!(" · {} abandoned", total.abandoned);
     }
     let unseen = format!(
-        " 👀 unread {} (median over {} finished tasks)",
-        maybe(median(&total.unseen)),
+        " 👀 unread {} in total over {} finished tasks",
+        human(total.unseen_total()),
         total.unseen.len(),
     );
     vec![Line::from(blocked), Line::from(unseen)]
@@ -214,8 +214,8 @@ fn table<'a>(kind: &'a str, rows: &'a [(String, Summary)], name_width: u16) -> T
         Row::new([
             name.clone(),
             human(s.blocked_total()),
+            human(s.unseen_total()),
             maybe(s.blocked.iter().max().copied()),
-            maybe(median(&s.unseen)),
         ])
     });
     let mut widths = vec![Constraint::Length(name_width)];
@@ -271,7 +271,7 @@ mod tests {
         // Blocked (27m) outweighs unread (1m); seed 0 picks the first quip.
         assert!(screen.contains("arms fell asleep"), "{screen}");
         assert!(
-            screen.contains("unread 1m (median over 1 finished tasks)"),
+            screen.contains("unread 1m in total over 1 finished tasks"),
             "{screen}"
         );
         assert!(screen.contains("1 abandoned"), "{screen}");
