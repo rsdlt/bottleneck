@@ -235,8 +235,10 @@ fn render_histogram(frame: &mut Frame, area: Rect, slices: &[Slice], span_ms: u6
 
     // Three lines share the axis row: start on the left, key in the middle,
     // "now" on the right. The x-axis is relative because we don't know the
-    // local timezone, so it can't show clock times.
-    frame.render_widget(Line::from(format!("{} ago", human(span_ms))).dim(), axis);
+    // local timezone, so it can't show clock times. Style the spans, not the
+    // lines: a line's style covers its whole area, so a dim line drawn last
+    // would also dim the colour key.
+    frame.render_widget(Line::from(format!("{} ago", human(span_ms)).dim()), axis);
     let key = Line::from(vec![
         "█".fg(BLOCKED_COLOR),
         " blocked   ".into(),
@@ -244,7 +246,7 @@ fn render_histogram(frame: &mut Frame, area: Rect, slices: &[Slice], span_ms: u6
         " unread".into(),
     ]);
     frame.render_widget(key.centered(), axis);
-    frame.render_widget(Line::from("now").dim().right_aligned(), axis);
+    frame.render_widget(Line::from("now".dim()).right_aligned(), axis);
 }
 
 fn legend_widget() -> Paragraph<'static> {
@@ -322,6 +324,7 @@ mod tests {
     use super::*;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use ratatui::style::Modifier;
 
     #[test]
     fn human_durations() {
@@ -366,6 +369,33 @@ mod tests {
             screen.contains("1 unreadable log lines skipped"),
             "{screen}"
         );
+    }
+
+    #[test]
+    fn histogram_key_is_not_dimmed() {
+        let log = log::parse(include_str!("../fixtures/two-workspaces.jsonl"));
+        let mut terminal = Terminal::new(TestBackend::new(80, 40)).unwrap();
+        terminal
+            .draw(|frame| render(frame, &log, Window::Day, 2_000_000, 0))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let row = (0..buffer.area.height)
+            .find(|&y| {
+                (0..buffer.area.width).any(|x| {
+                    buffer[(x, y)].symbol() == "n"
+                        && buffer[(x + 1, y)].symbol() == "o"
+                        && buffer[(x + 2, y)].symbol() == "w"
+                })
+            })
+            .unwrap();
+        let swatches: Vec<_> = (0..buffer.area.width)
+            .map(|x| &buffer[(x, row)])
+            .filter(|cell| cell.symbol() == "█")
+            .collect();
+        assert_eq!(swatches.len(), 2);
+        for cell in swatches {
+            assert!(!cell.modifier.contains(Modifier::DIM), "{cell:?}");
+        }
     }
 
     #[test]
