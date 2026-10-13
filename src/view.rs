@@ -4,6 +4,7 @@
 //! Herdr's socket: the hooks already capture every event, and the log is
 //! small, so a file read keeps the view simple and the data in one place.
 
+use std::hash::{BuildHasher, Hasher, RandomState};
 use std::io;
 use std::path::Path;
 use std::time::Duration;
@@ -17,6 +18,7 @@ use ratatui::{DefaultTerminal, Frame};
 
 use crate::event::Record;
 use crate::log::{self, Log};
+use crate::quips;
 use crate::stats::{self, Summary, median};
 
 /// The metric columns as (header, description). The table header and the
@@ -91,9 +93,12 @@ fn event_loop(
     now_ms: fn() -> u64,
 ) -> io::Result<()> {
     let mut window = Window::Session;
+    // std seeds every RandomState with fresh random keys, so hashing nothing
+    // gives a random number without pulling in a `rand` dependency.
+    let seed = RandomState::new().build_hasher().finish();
     loop {
         let log = log::read(log_path)?;
-        terminal.draw(|frame| render(frame, &log, window, now_ms()))?;
+        terminal.draw(|frame| render(frame, &log, window, now_ms(), seed))?;
         // Wake on a key press, or after REFRESH to pick up new records.
         if !event::poll(REFRESH)? {
             continue;
@@ -108,14 +113,15 @@ fn event_loop(
     }
 }
 
-fn render(frame: &mut Frame, log: &Log, window: Window, now_ms: u64) {
+fn render(frame: &mut Frame, log: &Log, window: Window, now_ms: u64, seed: u64) {
     let since_ms = window.since_ms(&log.records, now_ms);
     let report = stats::report(&log.records, since_ms, now_ms);
-    let [legend, header, workspaces, agents, footer] = Layout::vertical([
+    let [legend, header, workspaces, agents, quip, footer] = Layout::vertical([
         Constraint::Length(COLUMNS.len() as u16 + 2),
         Constraint::Length(4),
         Constraint::Fill(1),
         Constraint::Fill(1),
+        Constraint::Length(3),
         Constraint::Length(1),
     ])
     .areas(frame.area());
@@ -160,6 +166,14 @@ fn render(frame: &mut Frame, log: &Log, window: Window, now_ms: u64) {
             report.interrupted
         ));
     }
+    let message = quips::pick(
+        report.total.blocked_total(),
+        report.total.unseen_total(),
+        seed,
+    );
+    let quip_widget =
+        Paragraph::new(format!(" {message}").italic()).block(Block::bordered().title(" 💬 "));
+    frame.render_widget(quip_widget, quip);
     frame.render_widget(Line::from(notes.join("  ·  ")).dim(), footer);
 }
 
@@ -243,7 +257,7 @@ mod tests {
     fn draw(log: &Log, window: Window) -> String {
         let mut terminal = Terminal::new(TestBackend::new(110, 30)).unwrap();
         terminal
-            .draw(|frame| render(frame, log, window, 2_000_000))
+            .draw(|frame| render(frame, log, window, 2_000_000, 0))
             .unwrap();
         terminal.backend().to_string()
     }
@@ -254,6 +268,8 @@ mod tests {
         let screen = draw(&log, Window::Day);
         assert!(screen.contains("blocked 27m in total"), "{screen}");
         assert!(screen.contains("longest 10m"), "{screen}");
+        // Blocked (27m) outweighs unread (1m); seed 0 picks the first quip.
+        assert!(screen.contains("arms fell asleep"), "{screen}");
         assert!(
             screen.contains("unread 1m (median over 1 finished tasks)"),
             "{screen}"
@@ -281,6 +297,7 @@ mod tests {
             assert!(screen.contains(description), "{screen}");
         }
         assert!(screen.contains("No waits in this window"), "{screen}");
+        assert!(screen.contains("Nobody is waiting on you"), "{screen}");
     }
 
     #[test]

@@ -140,6 +140,10 @@ impl Summary {
     pub fn blocked_total(&self) -> u64 {
         self.blocked.iter().sum()
     }
+
+    pub fn unseen_total(&self) -> u64 {
+        self.unseen.iter().sum()
+    }
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]

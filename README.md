@@ -28,6 +28,9 @@ as a permission prompt. If your agents auto-approve their tools, most of
 their waiting shows up as 👀 Unread instead. That wait ends when the agent
 leaves `done`, which Herdr defines as "idle and not yet seen".
 
+The report ends with a joke aimed at whichever wait cost you more in total,
+blocked or unread.
+
 It also publishes each pane's blocked time over the last 24 hours as a
 `$waited` token (for example `waited 14m`) that you can show in Herdr's agent
 sidebar.

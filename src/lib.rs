@@ -7,5 +7,6 @@
 
 pub mod event;
 pub mod log;
+pub mod quips;
 pub mod stats;
 pub mod view;
