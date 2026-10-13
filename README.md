@@ -14,13 +14,12 @@ cut it down.
 
 ## What it measures
 
-Per workspace and per agent, over the last 24 hours or the last 7 days:
+Per workspace and per agent, for the current Herdr session, the last 24
+hours or the last 7 days:
 
 | Column | Meaning |
 |---|---|
 | ✋ Blocked | total time agents sat `blocked`, waiting for your answer |
-| 🔢 Blocks | how many times an agent got blocked |
-| 📊 Typical | median length of one block |
 | 🐢 Longest | longest single block |
 | 👀 Unread | median time from an agent finishing until you looked at it |
 
@@ -62,8 +61,10 @@ rows = [
 ]
 ```
 
-In the report, `Tab` switches between 24 hours and 7 days, and `q` or `Esc`
-closes it.
+In the report, `Tab` cycles through this session, the last 24 hours and the
+last 7 days, and `q` or `Esc` closes it. "This session" starts at the last
+Herdr restart; until Herdr restarts after you install the plugin, it covers
+everything recorded so far.
 
 ## How it works
 
@@ -98,7 +99,7 @@ All data stays local in `HERDR_PLUGIN_STATE_DIR`.
 ## Limitations
 
 - The log is never pruned. It grows by one short line per state change.
-- The windows are rolling (last 24 hours and last 7 days), not calendar days.
+- The 24-hour and 7-day windows are rolling, not calendar days.
 - Linux and macOS only for now.
 
 ## Development

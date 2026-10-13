@@ -191,6 +191,18 @@ pub fn pane_blocked_ms(records: &[Record], pane_id: &str, since_ms: u64, now_ms:
     report(&pane, since_ms, now_ms).total.blocked_total()
 }
 
+/// When the current Herdr session started: the latest `session_start`, or 0
+/// if Herdr hasn't restarted since recording began (the startup hook doesn't
+/// run when a plugin is first linked, so then everything is this session).
+pub fn session_start_ms(records: &[Record]) -> u64 {
+    records
+        .iter()
+        .filter(|record| matches!(record, Record::SessionStart { .. }))
+        .map(Record::ts_ms)
+        .max()
+        .unwrap_or(0)
+}
+
 fn sorted_by_blocked(groups: BTreeMap<&str, Summary>) -> Vec<(String, Summary)> {
     let mut rows: Vec<_> = groups
         .into_iter()
@@ -392,6 +404,16 @@ mod tests {
         assert_eq!(pane_blocked_ms(&records, "w1:p1", 0, 9 * MIN), 2 * MIN);
         // w1:p2's wait was cut off by the restart, so it doesn't count.
         assert_eq!(pane_blocked_ms(&records, "w1:p2", 0, 9 * MIN), 0);
+    }
+
+    #[test]
+    fn session_starts_at_the_latest_restart() {
+        assert_eq!(session_start_ms(&[status(5, "w1:p1", Status::Idle)]), 0);
+        let records = [
+            Record::SessionStart { ts_ms: 9 },
+            Record::SessionStart { ts_ms: 3 },
+        ];
+        assert_eq!(session_start_ms(&records), 9);
     }
 
     #[test]
