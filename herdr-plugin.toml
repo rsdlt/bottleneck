@@ -30,7 +30,8 @@ command = ["./target/release/bottleneck", "record"]
 id = "report"
 title = "Bottleneck"
 placement = "popup"
-width = "80%"
+# Fixed width: the widest content (title and legend) needs about 76 cells.
+width = 80
 height = "80%"
 command = ["./target/release/bottleneck", "view"]
 

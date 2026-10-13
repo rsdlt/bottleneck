@@ -35,6 +35,12 @@ const COLUMNS: [(&str, &str); 3] = [
     ),
 ];
 
+const WORKSPACE: &str = "📁 Workspace";
+const AGENT: &str = "🤖 Agent";
+
+/// Names longer than this are truncated so the metrics stay on screen.
+const MAX_NAME_WIDTH: usize = 30;
+
 const REFRESH: Duration = Duration::from_secs(2);
 const HOUR_MS: u64 = 60 * 60 * 1000;
 
@@ -127,8 +133,22 @@ fn render(frame: &mut Frame, log: &Log, window: Window, now_ms: u64) {
     let summary =
         Paragraph::new(summary_lines(&report.total)).block(Block::bordered().title(" Summary "));
     frame.render_widget(summary, header);
-    frame.render_widget(table("📁 Workspace", &report.by_workspace), workspaces);
-    frame.render_widget(table("🤖 Agent", &report.by_agent), agents);
+    // Size the name column to its widest entry instead of stretching it, so
+    // the tables pack left and leftover space falls at the right edge. Both
+    // tables share the width so their metric columns line up.
+    let names = report.by_workspace.iter().chain(&report.by_agent);
+    let name_width = names
+        .map(|(name, _)| Span::from(name.as_str()).width())
+        .chain([WORKSPACE, AGENT].map(|header| Span::from(header).width()))
+        .max()
+        .unwrap_or_default()
+        .min(MAX_NAME_WIDTH);
+    let name_width = name_width as u16 + 2;
+    frame.render_widget(
+        table(WORKSPACE, &report.by_workspace, name_width),
+        workspaces,
+    );
+    frame.render_widget(table(AGENT, &report.by_agent, name_width), agents);
 
     let mut notes = vec![" tab: switch period   q: quit".to_owned()];
     if log.skipped > 0 {
@@ -174,7 +194,7 @@ fn summary_lines(total: &Summary) -> Vec<Line<'static>> {
     vec![Line::from(blocked), Line::from(unseen)]
 }
 
-fn table<'a>(kind: &'a str, rows: &'a [(String, Summary)]) -> Table<'a> {
+fn table<'a>(kind: &'a str, rows: &'a [(String, Summary)], name_width: u16) -> Table<'a> {
     let header = Row::new(std::iter::once(kind).chain(COLUMNS.map(|(name, _)| name))).bold();
     let rows = rows.iter().map(|(name, s)| {
         Row::new([
@@ -184,7 +204,7 @@ fn table<'a>(kind: &'a str, rows: &'a [(String, Summary)]) -> Table<'a> {
             maybe(median(&s.unseen)),
         ])
     });
-    let mut widths = vec![Constraint::Fill(1)];
+    let mut widths = vec![Constraint::Length(name_width)];
     widths.extend(COLUMNS.map(|_| Constraint::Length(11)));
     Table::new(rows, widths)
         .header(header)
@@ -239,7 +259,12 @@ mod tests {
             "{screen}"
         );
         assert!(screen.contains("1 abandoned"), "{screen}");
-        assert!(screen.contains("web"), "{screen}");
+        // The name column fits its content, so metrics sit next to names.
+        let web = screen.lines().find(|line| line.contains("│web")).unwrap();
+        assert!(
+            web.find("15m").unwrap() - web.find("web").unwrap() < 20,
+            "{web}"
+        );
         assert!(screen.contains("codex"), "{screen}");
         assert!(
             screen.contains("1 unreadable log lines skipped"),
