@@ -10,7 +10,6 @@ state change and shows where that waiting time goes, so you can see it and
 cut it down.
 
 ![bottleneck report](docs/screenshot.png)
-<!-- TODO: add a screenshot of the report pane -->
 
 ## What it measures
 
@@ -41,7 +40,7 @@ sidebar.
 
 ## Install
 
-Requires Herdr 0.9.3 or later and a Rust toolchain (`cargo`, Rust 1.85+):
+Requires Herdr 0.9.3 or later and a Rust toolchain (`cargo`, Rust 1.88+):
 Herdr builds the plugin from source at install time.
 
 ```sh

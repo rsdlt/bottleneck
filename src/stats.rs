@@ -76,10 +76,10 @@ fn episodes(records: &[Record], now_ms: u64) -> Vec<Episode<'_>> {
                     Status::Done => Some(Wait::Unseen),
                     Status::Idle | Status::Working => None,
                 };
-                if let Some(current) = open.get(pane_id.as_str()) {
-                    if Some(current.wait) == wait {
-                        continue; // a repeat of the current state
-                    }
+                if let Some(current) = open.get(pane_id.as_str())
+                    && Some(current.wait) == wait
+                {
+                    continue; // a repeat of the current state
                 }
                 if let Some(episode) = open.remove(pane_id.as_str()) {
                     done.push(Episode {
