@@ -45,6 +45,14 @@ fn record() -> Result<(), Box<dyn Error>> {
         return Ok(());
     };
     let log_path = log::path(&state_dir()?);
+    if let Record::SessionStart { ts_ms } = record {
+        // Once per Herdr start, drop records past the retention period. A
+        // failure here must not stop the session marker being written.
+        let since_ms = ts_ms.saturating_sub(log::RETENTION_DAYS * DAY_MS);
+        if let Err(err) = log::prune(&log_path, since_ms) {
+            eprintln!("bottleneck record: pruning the log failed: {err}");
+        }
+    }
     log::append(&log_path, &record)?;
     if let Record::Status { ts_ms, pane_id, .. } = &record {
         publish_waited(&log_path, pane_id, *ts_ms)?;
