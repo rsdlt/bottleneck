@@ -16,11 +16,18 @@ cut it down.
 
 Per workspace and per agent, over the last 24 hours or the last 7 days:
 
-- **Blocked:** total time agents spent `blocked` (needing an answer), the
-  number of waits, the median wait and the longest one.
-- **Done → viewed:** the median time from an agent finishing until you
-  looked at it. Herdr defines `done` as "idle and not yet seen", so the wait
-  ends when the agent leaves `done`.
+| Column | Meaning |
+|---|---|
+| ✋ Blocked | total time agents sat `blocked`, waiting for your answer |
+| 🔢 Blocks | how many times an agent got blocked |
+| 📊 Typical | median length of one block |
+| 🐢 Longest | longest single block |
+| 👀 Unread | median time from an agent finishing until you looked at it |
+
+Herdr reports `blocked` only when an agent stops to ask you something, such
+as a permission prompt. If your agents auto-approve their tools, most of
+their waiting shows up as 👀 Unread instead. That wait ends when the agent
+leaves `done`, which Herdr defines as "idle and not yet seen".
 
 It also publishes each pane's blocked time over the last 24 hours as a
 `$waited` token (for example `waited 14m`) that you can show in Herdr's agent
