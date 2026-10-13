@@ -127,7 +127,8 @@ fn render(frame: &mut Frame, log: &Log, window: Window, now_ms: u64, seed: u64) 
         Constraint::Length(5),
         Constraint::Fill(1),
         Constraint::Fill(1),
-        Constraint::Length(9),
+        // Borders, 3 rows of bars, a spacer and the axis row.
+        Constraint::Length(7),
         Constraint::Length(3),
         Constraint::Length(1),
     ])
@@ -206,7 +207,13 @@ fn render_histogram(frame: &mut Frame, area: Rect, slices: &[Slice], span_ms: u6
 
     let width = (SLICES * 3 - 1) as u16;
     let [inner] = Layout::horizontal([Constraint::Length(width)]).areas(inner);
-    let [bars, axis] = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(inner);
+    // The blank row keeps the colour key from reading as part of the bars.
+    let [bars, _, axis] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner);
 
     let groups: Vec<BarGroup> = slices
         .iter()
