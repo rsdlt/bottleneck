@@ -52,39 +52,89 @@ const UNREAD_COLOR: Color = Color::Yellow;
 const REFRESH: Duration = Duration::from_secs(2);
 const HOUR_MS: u64 = 60 * 60 * 1000;
 
-/// The period the report covers, one tab each.
+/// One tab of the report: a period to report on, or the clear-history page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Window {
+enum Tab {
     Session,
     Day,
     Week,
+    Clear,
 }
 
-impl Window {
-    const ALL: [Window; 3] = [Window::Session, Window::Day, Window::Week];
+impl Tab {
+    const ALL: [Tab; 4] = [Tab::Session, Tab::Day, Tab::Week, Tab::Clear];
 
     fn label(self) -> &'static str {
         match self {
-            Window::Session => "this session",
-            Window::Day => "last 24h",
-            Window::Week => "last 7 days",
+            Tab::Session => "this session",
+            Tab::Day => "last 24h",
+            Tab::Week => "last 7 days",
+            Tab::Clear => "clear history",
         }
     }
 
-    fn since_ms(self, records: &[Record], now_ms: u64) -> u64 {
+    /// Where the tab's period starts, or `None` for the clear-history tab.
+    fn since_ms(self, records: &[Record], now_ms: u64) -> Option<u64> {
         match self {
-            Window::Session => stats::session_start_ms(records).unwrap_or(now_ms),
-            Window::Day => now_ms.saturating_sub(24 * HOUR_MS),
-            Window::Week => now_ms.saturating_sub(7 * 24 * HOUR_MS),
+            Tab::Session => Some(stats::session_start_ms(records).unwrap_or(now_ms)),
+            Tab::Day => Some(now_ms.saturating_sub(24 * HOUR_MS)),
+            Tab::Week => Some(now_ms.saturating_sub(7 * 24 * HOUR_MS)),
+            Tab::Clear => None,
         }
     }
 
     fn next(self) -> Self {
         match self {
-            Window::Session => Window::Day,
-            Window::Day => Window::Week,
-            Window::Week => Window::Session,
+            Tab::Session => Tab::Day,
+            Tab::Day => Tab::Week,
+            Tab::Week => Tab::Clear,
+            Tab::Clear => Tab::Session,
         }
+    }
+}
+
+/// Clearing history takes two presses of `x`, so one stray key can't do it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Clearing {
+    Idle,
+    Armed,
+    Done,
+}
+
+/// What the event loop should do after a key press.
+#[derive(Debug, PartialEq, Eq)]
+enum Action {
+    Nothing,
+    Quit,
+    ClearHistory,
+}
+
+struct State {
+    tab: Tab,
+    clearing: Clearing,
+    /// Picks the quip; drawn once so it doesn't change on every refresh.
+    seed: u64,
+}
+
+impl State {
+    fn on_key(&mut self, key: KeyCode) -> Action {
+        match key {
+            KeyCode::Char('q') | KeyCode::Esc => return Action::Quit,
+            KeyCode::Tab => {
+                self.tab = self.tab.next();
+                self.clearing = Clearing::Idle;
+            }
+            KeyCode::Char('x') if self.tab == Tab::Clear => {
+                if self.clearing == Clearing::Armed {
+                    self.clearing = Clearing::Done;
+                    return Action::ClearHistory;
+                }
+                self.clearing = Clearing::Armed;
+            }
+            // Any other key cancels a pending clear.
+            _ => self.clearing = Clearing::Idle,
+        }
+        Action::Nothing
     }
 }
 
@@ -98,32 +148,62 @@ fn event_loop(
     log_path: &Path,
     now_ms: fn() -> u64,
 ) -> io::Result<()> {
-    let mut window = Window::Session;
-    // std seeds every RandomState with fresh random keys, so hashing nothing
-    // gives a random number without pulling in a `rand` dependency.
-    let seed = RandomState::new().build_hasher().finish();
+    let mut state = State {
+        tab: Tab::Session,
+        clearing: Clearing::Idle,
+        // std seeds every RandomState with fresh random keys, so hashing
+        // nothing gives a random number without a `rand` dependency.
+        seed: RandomState::new().build_hasher().finish(),
+    };
     loop {
         let log = log::read(log_path)?;
-        terminal.draw(|frame| render(frame, &log, window, now_ms(), seed))?;
+        terminal.draw(|frame| render(frame, &log, &state, now_ms()))?;
         // Wake on a key press, or after REFRESH to pick up new records.
         if !event::poll(REFRESH)? {
             continue;
         }
-        if let Some(key) = event::read()?.as_key_press_event() {
-            match key.code {
-                KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                KeyCode::Tab => window = window.next(),
-                _ => {}
-            }
+        let Some(key) = event::read()?.as_key_press_event() else {
+            continue;
+        };
+        match state.on_key(key.code) {
+            Action::Quit => return Ok(()),
+            Action::ClearHistory => log::clear(log_path)?,
+            Action::Nothing => {}
         }
     }
 }
 
-fn render(frame: &mut Frame, log: &Log, window: Window, now_ms: u64, seed: u64) {
-    let since_ms = window.since_ms(&log.records, now_ms);
-    let report = stats::report(&log.records, since_ms, now_ms);
-    let [legend, header, workspaces, agents, chart, quip, footer] = Layout::vertical([
+fn render(frame: &mut Frame, log: &Log, state: &State, now_ms: u64) {
+    let [legend, body] = Layout::vertical([
         Constraint::Length(COLUMNS.len() as u16 + 2),
+        Constraint::Fill(1),
+    ])
+    .areas(frame.area());
+
+    let tabs = Tab::ALL.map(|tab| {
+        let span = Span::from(format!(" {} ", tab.label()));
+        if tab == state.tab {
+            span.reversed()
+        } else {
+            span
+        }
+    });
+    let mut title = Line::from(" bottleneck ".bold());
+    title.extend(tabs);
+    frame.render_widget(
+        legend_widget().block(Block::bordered().title(title)),
+        legend,
+    );
+
+    match state.tab.since_ms(&log.records, now_ms) {
+        Some(since_ms) => render_report(frame, body, log, since_ms, now_ms, state.seed),
+        None => render_clear(frame, body, log, state.clearing, now_ms),
+    }
+}
+
+fn render_report(frame: &mut Frame, area: Rect, log: &Log, since_ms: u64, now_ms: u64, seed: u64) {
+    let report = stats::report(&log.records, since_ms, now_ms);
+    let [header, workspaces, agents, chart, quip, footer] = Layout::vertical([
         Constraint::Length(5),
         Constraint::Fill(1),
         Constraint::Fill(1),
@@ -132,18 +212,8 @@ fn render(frame: &mut Frame, log: &Log, window: Window, now_ms: u64, seed: u64) 
         Constraint::Length(3),
         Constraint::Length(1),
     ])
-    .areas(frame.area());
+    .areas(area);
 
-    let tabs = Window::ALL.map(|tab| {
-        let span = Span::from(format!(" {} ", tab.label()));
-        if tab == window { span.reversed() } else { span }
-    });
-    let mut title = Line::from(" bottleneck: agents waiting on you ".bold());
-    title.extend(tabs);
-    frame.render_widget(
-        legend_widget().block(Block::bordered().title(title)),
-        legend,
-    );
     let summary =
         Paragraph::new(summary_lines(&report.total)).block(Block::bordered().title(" Summary "));
     frame.render_widget(summary, header);
@@ -164,16 +234,6 @@ fn render(frame: &mut Frame, log: &Log, window: Window, now_ms: u64, seed: u64) 
     );
     frame.render_widget(table(AGENT, &report.by_agent, name_width), agents);
 
-    let mut notes = vec![" tab: switch period   q: quit".to_owned()];
-    if log.skipped > 0 {
-        notes.push(format!("{} unreadable log lines skipped", log.skipped));
-    }
-    if report.interrupted > 0 {
-        notes.push(format!(
-            "{} waits cut off by a Herdr restart, not counted",
-            report.interrupted
-        ));
-    }
     let slices = stats::histogram(&log.records, since_ms, now_ms, SLICES);
     render_histogram(frame, chart, &slices, now_ms - since_ms.min(now_ms));
 
@@ -185,7 +245,59 @@ fn render(frame: &mut Frame, log: &Log, window: Window, now_ms: u64, seed: u64) 
     let quip_widget =
         Paragraph::new(format!(" {message}").italic()).block(Block::bordered().title(" 💬 "));
     frame.render_widget(quip_widget, quip);
+
+    let mut notes = vec![" tab: switch tab   q: quit".to_owned()];
+    if log.skipped > 0 {
+        notes.push(format!("{} unreadable log lines skipped", log.skipped));
+    }
+    if report.interrupted > 0 {
+        notes.push(format!(
+            "{} waits cut off by a Herdr restart, not counted",
+            report.interrupted
+        ));
+    }
     frame.render_widget(Line::from(notes.join("  ·  ")).dim(), footer);
+}
+
+/// The clear-history page: what is stored, the two-step action, a warning.
+fn render_clear(frame: &mut Frame, area: Rect, log: &Log, clearing: Clearing, now_ms: u64) {
+    let [page, footer] = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(area);
+
+    let stored = match log.records.iter().map(Record::ts_ms).min() {
+        Some(oldest) => format!(
+            " {} events recorded, the oldest from {} ago.",
+            log.records.len(),
+            human(now_ms.saturating_sub(oldest)),
+        ),
+        None => " Nothing recorded yet.".to_owned(),
+    };
+    let action = match clearing {
+        Clearing::Idle => Line::from(" Press x to clear all recorded history."),
+        Clearing::Armed => Line::from(" Press x again to confirm. Any other key cancels.".bold()),
+        Clearing::Done => Line::from(" History cleared.".green()),
+    };
+    let lines = vec![
+        Line::from(""),
+        Line::from(stored),
+        Line::from(format!(
+            " Records older than {} days are pruned automatically when Herdr starts.",
+            log::RETENTION_DAYS,
+        ))
+        .dim(),
+        Line::from(""),
+        action,
+        Line::from(""),
+        Line::from(" Warning: this permanently deletes every recorded wait for all".red()),
+        Line::from(" agents and workspaces. It can't be undone.".red()),
+    ];
+    frame.render_widget(
+        Paragraph::new(lines).block(Block::bordered().title(" Clear history ")),
+        page,
+    );
+    frame.render_widget(
+        Line::from(" x: clear   tab: switch tab   q: quit".dim()),
+        footer,
+    );
 }
 
 /// Draws the histogram with a time axis underneath. There is no y-axis, so
@@ -334,10 +446,18 @@ mod tests {
         assert_eq!(human(2 * HOUR_MS + 5 * 60_000), "2h05m");
     }
 
-    fn draw(log: &Log, window: Window) -> String {
+    fn state(tab: Tab) -> State {
+        State {
+            tab,
+            clearing: Clearing::Idle,
+            seed: 0,
+        }
+    }
+
+    fn draw(log: &Log, tab: Tab) -> String {
         let mut terminal = Terminal::new(TestBackend::new(80, 40)).unwrap();
         terminal
-            .draw(|frame| render(frame, log, window, 2_000_000, 0))
+            .draw(|frame| render(frame, log, &state(tab), 2_000_000))
             .unwrap();
         terminal.backend().to_string()
     }
@@ -345,7 +465,7 @@ mod tests {
     #[test]
     fn renders_fixture_report() {
         let log = log::parse(include_str!("../fixtures/two-workspaces.jsonl"));
-        let screen = draw(&log, Window::Day);
+        let screen = draw(&log, Tab::Day);
         assert!(screen.contains("blocked 27m in total"), "{screen}");
         assert!(screen.contains("longest 10m blocked"), "{screen}");
         // Blocked (27m) outweighs unread (1m); seed 0 picks the first quip.
@@ -376,7 +496,7 @@ mod tests {
         let log = log::parse(include_str!("../fixtures/two-workspaces.jsonl"));
         let mut terminal = Terminal::new(TestBackend::new(80, 40)).unwrap();
         terminal
-            .draw(|frame| render(frame, &log, Window::Day, 2_000_000, 0))
+            .draw(|frame| render(frame, &log, &state(Tab::Day), 2_000_000))
             .unwrap();
         let buffer = terminal.backend().buffer();
         let row = (0..buffer.area.height)
@@ -399,8 +519,62 @@ mod tests {
     }
 
     #[test]
+    fn clearing_needs_two_presses_of_x() {
+        let mut state = state(Tab::Clear);
+        assert_eq!(state.on_key(KeyCode::Char('x')), Action::Nothing);
+        assert_eq!(state.clearing, Clearing::Armed);
+        assert_eq!(state.on_key(KeyCode::Char('x')), Action::ClearHistory);
+        assert_eq!(state.clearing, Clearing::Done);
+    }
+
+    #[test]
+    fn any_other_key_cancels_a_pending_clear() {
+        let mut state = state(Tab::Clear);
+        state.on_key(KeyCode::Char('x'));
+        state.on_key(KeyCode::Char('a'));
+        assert_eq!(state.on_key(KeyCode::Char('x')), Action::Nothing);
+        assert_eq!(state.clearing, Clearing::Armed);
+        // Leaving the tab cancels too, and lands back on the first tab.
+        state.on_key(KeyCode::Tab);
+        assert_eq!((state.tab, state.clearing), (Tab::Session, Clearing::Idle));
+    }
+
+    #[test]
+    fn x_does_nothing_outside_the_clear_tab() {
+        let mut state = state(Tab::Day);
+        assert_eq!(state.on_key(KeyCode::Char('x')), Action::Nothing);
+        assert_eq!(state.on_key(KeyCode::Char('x')), Action::Nothing);
+    }
+
+    #[test]
+    fn renders_clear_page_with_warning() {
+        let log = log::parse(include_str!("../fixtures/two-workspaces.jsonl"));
+        let screen = draw(&log, Tab::Clear);
+        assert!(screen.contains("clear history"), "{screen}");
+        assert!(
+            screen.contains("11 events recorded, the oldest from 33m ago"),
+            "{screen}"
+        );
+        assert!(screen.contains("older than 60 days are pruned"), "{screen}");
+        assert!(
+            screen.contains("Press x to clear all recorded history"),
+            "{screen}"
+        );
+        assert!(screen.contains("It can't be undone"), "{screen}");
+
+        let mut armed = state(Tab::Clear);
+        armed.clearing = Clearing::Armed;
+        let mut terminal = Terminal::new(TestBackend::new(80, 40)).unwrap();
+        terminal
+            .draw(|frame| render(frame, &log, &armed, 2_000_000))
+            .unwrap();
+        let screen = terminal.backend().to_string();
+        assert!(screen.contains("Press x again to confirm"), "{screen}");
+    }
+
+    #[test]
     fn renders_empty_log() {
-        let screen = draw(&Log::default(), Window::Session);
+        let screen = draw(&Log::default(), Tab::Session);
         for (name, description) in COLUMNS {
             let name = name.split_once(' ').map_or(name, |(_, word)| word);
             assert!(screen.contains(name), "{screen}");
@@ -423,9 +597,9 @@ mod tests {
             "\n",
             r#"{"kind":"status","ts_ms":500000,"pane_id":"w1:p1","workspace":"api","status":"working"}"#,
         ));
-        let session = draw(&log, Window::Session);
+        let session = draw(&log, Tab::Session);
         assert!(session.contains("blocked 5m in total"), "{session}");
-        let day = draw(&log, Window::Day);
+        let day = draw(&log, Tab::Day);
         assert!(day.contains("blocked 6m in total"), "{day}");
     }
 }

@@ -69,8 +69,10 @@ rows = [
 ]
 ```
 
-In the report, `Tab` cycles through this session, the last 24 hours and the
-last 7 days, and `q` or `Esc` closes it. "This session" starts at the last
+In the report, `Tab` cycles through this session, the last 24 hours, the
+last 7 days and **clear history**, and `q` or `Esc` closes it. On the clear
+history tab, press `x` twice to delete everything recorded; any other key
+cancels. "This session" starts at the last
 Herdr restart; until Herdr restarts after you install the plugin, it covers
 everything recorded so far.
 
@@ -102,11 +104,11 @@ Rules for edge cases:
   so they can't inflate the numbers.
 - **Corrupt log lines** are skipped, counted and shown in the report.
 
-All data stays local in `HERDR_PLUGIN_STATE_DIR`.
+All data stays local in `HERDR_PLUGIN_STATE_DIR`. Each time Herdr starts,
+records older than 60 days are pruned.
 
 ## Limitations
 
-- The log is never pruned. It grows by one short line per state change.
 - The 24-hour and 7-day windows are rolling, not calendar days.
 - Linux and macOS only for now.
 
