@@ -1,5 +1,7 @@
 # bottleneck
 
+[![CI](https://github.com/rsdlt/bottleneck/actions/workflows/ci.yml/badge.svg)](https://github.com/rsdlt/bottleneck/actions/workflows/ci.yml)
+
 A [Herdr](https://herdr.dev) plugin that measures how long your AI coding
 agents sit waiting on you.
 
